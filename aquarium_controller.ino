@@ -1,34 +1,76 @@
-#include  <ESP8266WiFi.h>
+#include <ESP8266WiFi.h>
+#include <Wire.h>
+#include <DallasTemperature.h>               //dodaj biblitekę obsługującą DS18B20
 #include <urlencode.h>
 #include <string.h>
 #include <ArduinoJson.h>
 #include "credentials.h"
+#include <MedianFilter.h>
+#include <ESP8266WebServer.h>   // Include the WebServer library
+
  
-const char* host = "192.168.1.110";
-const char* authentication_token = "";
+const char* host = "192.168.2.101";
+const int httpPort = 3001;
+String authentication_token = "";
 const char* device = "";
 const char* json_buffer = "";
 String name = "aquarium_controller";
 boolean loggedIn = false;
 
 
+OneWire oneWire(14);                   //wywołujemy transmisję 1-Wire na pinie 14 (D5)
+DallasTemperature sensors(&oneWire);         //informujemy Arduino, ze przy pomocy 1-Wire
+
 //settings
 float temperature_set = 0.0;
 unsigned long turn_on_time = 0;
 unsigned long turn_off_time = 0;
 unsigned long current_time = 0;
+
+unsigned long currentMillis = 0;
+unsigned long previousReportMillis = 0;
+
 unsigned int red_intensity = 0;
 unsigned int green_intensity = 0;
 unsigned int blue_intensity = 0;
 unsigned int white_intensity = 0;
 
+int ch1Pin = 5;//D1
+int ch2Pin = 4;//D2
+int ch3Pin = 0;//D3
+int ch4Pin = 2;//D4
+
+int CO2Pin = 12;//D6
+int heaterPin = 13;//D7
+
+boolean valve_on = false;
+
+int trigPin = 15;//D8
+int echoPin = 16;//D0
+float pulseTime = 0;
+float distance = 0;
+int maxDistance = 100;
+
+MedianFilter filterObject(81, 11505);
+
 
 int ledPin = 2; // D4
 int ledPin2 = 12; // D6
 
+DeviceAddress sensor1 = { 0x28, 0xC, 0x1, 0x7, 0xA0, 0x46, 0x1, 0xB1 };
+DeviceAddress sensor2 = { 0x28, 0x2, 0x0, 0x7, 0x8F, 0x20, 0x1, 0x54 };
+
+float temp0 = 0;
+float temp1 = 0;
+float temp2 = 0;
+
+
+ESP8266WebServer server(80);
+String header;
+
+
 boolean makeRequest(String endpoint, String params, boolean auth, String type){
   WiFiClient client;
-  const int httpPort = 3001;
   if (!client.connect(host, httpPort)) {
     Serial.println("connection failed");
     return false;
@@ -40,15 +82,19 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
 
   url += "?device[name]=";
   url += urlencode(name);
-  if (auth) {
-    url += "&device[authentication_token]=";
-    url += urlencode(authentication_token);
-  }
   url += params;
   Serial.println(url);
-  client.print(type + " " + url + " HTTP/1.1\r\n" +
-               "Host: " + host + "\r\n" +
-               "Connection: close\r\n\r\n");
+  if (auth) {
+    client.print(type + " " + url + " HTTP/1.1\r\n" +
+                 "Host: " + host + "\r\n" +
+                 "AUTHORIZATION: " + authentication_token + "\r\n" +
+                 "Connection: close\r\n\r\n");
+  }
+  else {
+    client.print(type + " " + url + " HTTP/1.1\r\n" +
+                 "Host: " + host + "\r\n" +
+                 "Connection: close\r\n\r\n");
+  }
 
   unsigned long timeout = millis();
   while (client.available() == 0) {
@@ -58,23 +104,25 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
     }
   }
   bool status_ok = false;
-  StaticJsonBuffer<500> jsonBuffer;
+  StaticJsonBuffer<700> jsonBuffer;
   while (client.available()) {
     String line = client.readStringUntil('\r');
     if (line.substring(9, 15) == "200 OK"){ status_ok = true;}
     else if (line.substring(9, 25) == "401 Unauthorized"){
       status_ok = false;
       loggedIn = false;
-      }
+    }
     JsonObject& root = jsonBuffer.parseObject(line);
     // Test if parsing succeeds.
     if (!root.success()) {
-      //root.printTo(Serial);
 
     }
     else{
       if (root.containsKey("authentication_token")){
-        authentication_token = root["authentication_token"];
+        Serial.println("token: ");
+        root["authentication_token"].printTo(Serial);
+        String auth_token = root["authentication_token"];
+        authentication_token = auth_token;
       }
       if (root.containsKey("settings")){
         JsonObject& settings = root["settings"];
@@ -88,14 +136,12 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
           blue_intensity = intensity["blue"];
           white_intensity = intensity["white"];
         }
+        if (settings.containsKey("valve_on")){
+          valve_on = settings["valve_on"];
+        }
         
       }
-      if (root.containsKey("turn_on_time")){
-        turn_on_time = root["turn_on_time"];
-      }
-      if (root.containsKey("turn_off_time")){
-        turn_off_time = root["turn_off_time"];
-      }
+
 
       loggedIn = true;
       Serial.println("root");
@@ -105,18 +151,47 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
   return status_ok;
 }
 
+int measureDistance(){
+  int i;
+  for(i=0; i<81; i++){
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
 
-void reportTemperature(){
-  String endpoint = "reports";
-  String params = "";
-  params += "&device[reports][temperature]=";
-  params += urlencode(String(random(20, 30)));
-  boolean requestSucceeded = makeRequest( endpoint, params,  true, "POST");
-  Serial.println("intensity:");
-  Serial.println(red_intensity);
-  Serial.println(green_intensity);
-  Serial.println(blue_intensity);
-  Serial.println(white_intensity);
+    pulseTime = pulseIn(echoPin, HIGH);
+    distance = pulseTime*340/200;
+
+    filterObject.in(distance);
+  }
+  int measuredDistance = filterObject.out();
+  return measuredDistance;
+}
+
+
+void reportData(){
+  if (millis() >= previousReportMillis + 60000){
+    
+    Serial.print("Requesting temperatures...");
+    sensors.requestTemperatures(); // Send the command to get temperatures
+    Serial.println("DONE");
+     
+    float temperature = sensors.getTempCByIndex(0);
+    Serial.println(temperature);
+    
+    String endpoint = "reports";
+    String params = "";
+    params += "&device[reports][temperature]=";
+    params += urlencode(String(temperature));
+    params += "&device[reports][distance]=";
+    params += urlencode(String(measureDistance()));
+    Serial.println("Params:");
+    Serial.println(params);
+    boolean requestSucceeded = makeRequest(endpoint, params,  true, "POST");
+    previousReportMillis = millis();
+   }
 }
 
 void logIn(){
@@ -126,37 +201,78 @@ void logIn(){
   params += urlencode(device_password);
   boolean requestSucceeded = false;
   while (requestSucceeded == false){
-    requestSucceeded = makeRequest( endpoint, params,  false, "GET");
-    
+    requestSucceeded = makeRequest(endpoint, params,  false, "GET");
   }
-
 }
 
 void setLightPorts(){
-  analogWrite(D1, red_intensity);
-  analogWrite(D2, green_intensity);
-  analogWrite(D2, blue_intensity);
-  analogWrite(D4, white_intensity);
+  analogWrite(ch1Pin, red_intensity);
+  analogWrite(ch2Pin, green_intensity);
+  analogWrite(ch3Pin, white_intensity);
+}
+
+void setValve(){
+  if (valve_on == true){
+    digitalWrite(CO2Pin, HIGH);
+  }
+  else{
+    digitalWrite(CO2Pin, LOW);
+  }
+}
+
+//     This rutine is exicuted when you open its IP in browser
+//===============================================================
+void handleUpdateIntensity() {
+  String message = "Body received:\n";
+  message += server.arg("plain");
+
+
+  const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
+  DynamicJsonBuffer jsonBuffer(bufferSize);
+  
+  String json = server.arg("plain");
+  
+  JsonObject& root = jsonBuffer.parseObject(json);
+
+    
+  server.send(200, "text/plain", "hello from esp8266!");
+  Serial.println("message:");
+  root.printTo(Serial);
+  Serial.println(message);
 }
 
 
 void setup() {
+  analogWriteFreq(200);
+  pinMode(ch1Pin, OUTPUT);
+  pinMode(ch2Pin, OUTPUT);
+  pinMode(ch3Pin, OUTPUT);
+  pinMode(ch4Pin, OUTPUT);
+  pinMode(CO2Pin, OUTPUT);
+  pinMode(heaterPin, OUTPUT);
+
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
+
+  setLightPorts();
+
+  analogWrite(ch1Pin, 0);
+  analogWrite(ch2Pin, 0);
+  analogWrite(ch3Pin, 0);
+  analogWrite(ch4Pin, 0);
+  digitalWrite(CO2Pin, LOW);
+  digitalWrite(heaterPin, LOW);
+  
   Serial.begin(115200);
   delay(10);
   
-   
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, LOW);
-  pinMode(ledPin2, OUTPUT);
-  digitalWrite(ledPin2, LOW);
-   
   // Connect to WiFi network
   Serial.println();
   Serial.println();
   Serial.println("dupa");
   Serial.print("Connecting to ");
   Serial.println(ssid);
-  //WiFi.mode(WIFI_STA); // <<< Station
+  WiFi.mode(WIFI_STA); // <<< Station
   WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
@@ -178,18 +294,25 @@ void setup() {
 
   Serial.println();
   Serial.println("closing connection");
+  server.on("/update_intensity", handleUpdateIntensity);
 
-
+  const char * headerkeys[] = {"Content-Type","Content-Length"} ;
+  size_t headerkeyssize = sizeof(headerkeys)/sizeof(char*);
+  server.collectHeaders(headerkeys, headerkeyssize );
+  server.begin();                  //Start server
+  Serial.println("HTTP server started");
 }
 
 void loop() {
-  delay(2000);
-  reportTemperature();
   if (loggedIn == false){
      logIn();
   }
-  setLightPorts();
+    
   
+  reportData();
+  setLightPorts();
+  setValve();
+  server.handleClient();          //Handle client requests
 }
 
 
