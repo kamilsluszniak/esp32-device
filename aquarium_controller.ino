@@ -133,7 +133,6 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
           JsonObject& intensity = settings["intensity"];
           red_intensity = intensity["red"];
           green_intensity = intensity["green"];
-          blue_intensity = intensity["blue"];
           white_intensity = intensity["white"];
         }
         if (settings.containsKey("valve_on")){
@@ -224,21 +223,18 @@ void setValve(){
 //===============================================================
 void handleUpdateIntensity() {
   String message = "Body received:\n";
-  message += server.arg("plain");
-
-
-  const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
-  DynamicJsonBuffer jsonBuffer(bufferSize);
-  
-  String json = server.arg("plain");
-  
-  JsonObject& root = jsonBuffer.parseObject(json);
+  StaticJsonBuffer<700> jsonBuffer; 
+  JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
 
     
   server.send(200, "text/plain", "hello from esp8266!");
-  Serial.println("message:");
+  Serial.println("root:");
   root.printTo(Serial);
-  Serial.println(message);
+  Serial.println("endroot");
+  red_intensity = root["red"];
+  green_intensity = root["green"];
+  white_intensity = root["white"];
+
 }
 
 
