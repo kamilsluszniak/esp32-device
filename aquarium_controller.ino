@@ -297,17 +297,20 @@ void setup() {
   server.collectHeaders(headerkeys, headerkeyssize );
   server.begin();                  //Start server
   Serial.println("HTTP server started");
+  ESP.wdtDisable();
 }
 
 void loop() {
+  ESP.wdtFeed();
   if (loggedIn == false){
      logIn();
   }
     
-  
+  ESP.wdtFeed();
   reportData();
   setLightPorts();
   setValve();
+  ESP.wdtFeed();
   server.handleClient();          //Handle client requests
 }
 
