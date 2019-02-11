@@ -101,6 +101,7 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
     if (millis() - timeout > 5000) {
       Serial.println(">>> Client Timeout !");
       client.stop();
+      return false;
     }
   }
   bool status_ok = false;
@@ -119,8 +120,6 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
     }
     else{
       if (root.containsKey("authentication_token")){
-        Serial.println("token: ");
-        root["authentication_token"].printTo(Serial);
         String auth_token = root["authentication_token"];
         authentication_token = auth_token;
       }
@@ -140,11 +139,7 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
         }
         
       }
-
-
       loggedIn = true;
-      Serial.println("root");
-      root.printTo(Serial);
     }
   }
   return status_ok;
@@ -172,13 +167,10 @@ int measureDistance(){
 
 void reportData(){
   if (millis() >= previousReportMillis + 60000){
-    
-    Serial.print("Requesting temperatures...");
+
     sensors.requestTemperatures(); // Send the command to get temperatures
-    Serial.println("DONE");
      
     float temperature = sensors.getTempCByIndex(0);
-    Serial.println(temperature);
     
     String endpoint = "reports";
     String params = "";
@@ -186,10 +178,11 @@ void reportData(){
     params += urlencode(String(temperature));
     params += "&device[reports][distance]=";
     params += urlencode(String(measureDistance()));
-    Serial.println("Params:");
-    Serial.println(params);
     boolean requestSucceeded = makeRequest(endpoint, params,  true, "POST");
-    previousReportMillis = millis();
+    if (requestSucceeded){
+      previousReportMillis = millis();
+    }
+    
    }
 }
 
@@ -221,20 +214,24 @@ void setValve(){
 
 //     This rutine is exicuted when you open its IP in browser
 //===============================================================
+
 void handleUpdateIntensity() {
   String message = "Body received:\n";
-  StaticJsonBuffer<700> jsonBuffer; 
-  JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
+  message += server.arg("plain");
+
+
+  const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
+  DynamicJsonBuffer jsonBuffer(bufferSize);
+  
+  String json = server.arg("plain");
+  
+  JsonObject& root = jsonBuffer.parseObject(json);
 
     
   server.send(200, "text/plain", "hello from esp8266!");
-  Serial.println("root:");
+  Serial.println("message:");
   root.printTo(Serial);
-  Serial.println("endroot");
-  red_intensity = root["red"];
-  green_intensity = root["green"];
-  white_intensity = root["white"];
-
+  Serial.println(message);
 }
 
 
@@ -290,27 +287,18 @@ void setup() {
 
   Serial.println();
   Serial.println("closing connection");
-  server.on("/update_intensity", handleUpdateIntensity);
-
-  const char * headerkeys[] = {"Content-Type","Content-Length"} ;
-  size_t headerkeyssize = sizeof(headerkeys)/sizeof(char*);
-  server.collectHeaders(headerkeys, headerkeyssize );
-  server.begin();                  //Start server
-  Serial.println("HTTP server started");
-  ESP.wdtDisable();
 }
 
 void loop() {
-  ESP.wdtFeed();
   if (loggedIn == false){
      logIn();
   }
-    
-  ESP.wdtFeed();
+  
+
+  
   reportData();
   setLightPorts();
   setValve();
-  ESP.wdtFeed();
   server.handleClient();          //Handle client requests
 }
 
