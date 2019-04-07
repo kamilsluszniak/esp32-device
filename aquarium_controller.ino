@@ -43,7 +43,7 @@ int ch4Pin = 2;//D4
 int CO2Pin = 12;//D6
 int heaterPin = 13;//D7
 
-boolean valve_on = false;
+boolean co2valve_on = false;
 
 int trigPin = 15;//D8
 int echoPin = 16;//D0
@@ -134,8 +134,8 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
           green_intensity = intensity["green"];
           white_intensity = intensity["white"];
         }
-        if (settings.containsKey("valve_on")){
-          valve_on = settings["valve_on"];
+        if (settings.containsKey("co2valve_on")){
+          c02valve_on = settings["co2valve_on"];
         }
         
       }
@@ -204,7 +204,7 @@ void setLightPorts(){
 }
 
 void setValve(){
-  if (valve_on == true){
+  if (co2valve_on == true){
     digitalWrite(CO2Pin, HIGH);
   }
   else{
