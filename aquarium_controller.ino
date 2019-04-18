@@ -8,7 +8,7 @@
 #include <MedianFilter.h>
 #include <ESP8266WebServer.h>   // Include the WebServer library
 
- 
+
 const char* host = "192.168.2.101";
 const int httpPort = 3001;
 String authentication_token = "";
@@ -16,6 +16,7 @@ const char* device = "";
 const char* json_buffer = "";
 String name = "aquarium_controller";
 boolean loggedIn = false;
+String water_input_valve_ip = "";
 
 
 OneWire oneWire(14);                   //wywołujemy transmisję 1-Wire na pinie 14 (D5)
@@ -49,7 +50,11 @@ int trigPin = 15;//D8
 int echoPin = 16;//D0
 float pulseTime = 0;
 float distance = 0;
-int maxDistance = 100;
+int maxDistance = 9999;
+int distanceTriggerCount = 0;
+boolean waterInputRegulationOn = false;
+boolean water_input_valve_on = false;
+int measuredDistance = 0;
 
 MedianFilter filterObject(81, 11505);
 
@@ -69,7 +74,7 @@ ESP8266WebServer server(80);
 String header;
 
 
-boolean makeRequest(String endpoint, String params, boolean auth, String type){
+boolean makeRequest(String endpoint, String params, boolean auth, String type) {
   WiFiClient client;
   if (!client.connect(host, httpPort)) {
     Serial.println("connection failed");
@@ -108,8 +113,10 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
   StaticJsonBuffer<700> jsonBuffer;
   while (client.available()) {
     String line = client.readStringUntil('\r');
-    if (line.substring(9, 15) == "200 OK"){ status_ok = true;}
-    else if (line.substring(9, 25) == "401 Unauthorized"){
+    if (line.substring(9, 15) == "200 OK") {
+      status_ok = true;
+    }
+    else if (line.substring(9, 25) == "401 Unauthorized") {
       status_ok = false;
       loggedIn = false;
     }
@@ -118,26 +125,38 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
     if (!root.success()) {
 
     }
-    else{
-      if (root.containsKey("authentication_token")){
+    else {
+      if (root.containsKey("authentication_token")) {
         String auth_token = root["authentication_token"];
         authentication_token = auth_token;
       }
-      if (root.containsKey("settings")){
+      if (root.containsKey("settings")) {
         JsonObject& settings = root["settings"];
-        if (settings.containsKey("temperature_set")){
+        if (settings.containsKey("temperature_set")) {
           temperature_set = settings["temperature_set"];
         }
-        if (settings.containsKey("intensity")){
+        if (settings.containsKey("intensity")) {
           JsonObject& intensity = settings["intensity"];
           red_intensity = intensity["red"];
           green_intensity = intensity["green"];
           white_intensity = intensity["white"];
         }
-        if (settings.containsKey("co2valve_on")){
-          c02valve_on = settings["co2valve_on"];
+        if (settings.containsKey("co2valve_on")) {
+          co2valve_on = settings["co2valve_on"];
         }
-        
+        if (settings.containsKey("water_input_valve_on")) {
+          waterInputRegulationOn = settings["water_input_valve_on"];
+        }
+        if (settings.containsKey("distance")) {
+          maxDistance = settings["distance"];
+        }
+        if (settings.containsKey("connected_devices")) {
+          JsonObject& connected_devices = settings["connected_devices"];
+          if (connected_devices.containsKey("water_input_valve")) {
+            water_input_valve_ip = connected_devices["water_input_valve"].as<String>();
+          }
+        }
+
       }
       loggedIn = true;
     }
@@ -145,9 +164,9 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type){
   return status_ok;
 }
 
-int measureDistance(){
+int measureDistance() {
   int i;
-  for(i=0; i<81; i++){
+  for (i = 0; i < 81; i++) {
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
     digitalWrite(trigPin, HIGH);
@@ -156,7 +175,7 @@ int measureDistance(){
     delayMicroseconds(2);
 
     pulseTime = pulseIn(echoPin, HIGH);
-    distance = pulseTime*340/200;
+    distance = pulseTime * 340 / 200;
 
     filterObject.in(distance);
   }
@@ -164,50 +183,68 @@ int measureDistance(){
   return measuredDistance;
 }
 
+void shouldTurnWaterInputOn(int distance) {
+  if (waterInputRegulationOn) {
+    if (distance > maxDistance) {
+      distanceTriggerCount++;
+      if (distanceTriggerCount > 3) {
+        Serial.println("valve input on:");
+        water_input_valve_on = true;
+      }
+    }
+    else {
+      Serial.println("valve input off:");
+      water_input_valve_on = false;
+      distanceTriggerCount = 0;
+    }
+  }
+}
 
-void reportData(){
-  if (millis() >= previousReportMillis + 60000){
+
+void reportData() {
+  if (millis() >= previousReportMillis + 60000) {
 
     sensors.requestTemperatures(); // Send the command to get temperatures
-     
+
     float temperature = sensors.getTempCByIndex(0);
-    
+    measuredDistance = measureDistance();
+
     String endpoint = "reports";
     String params = "";
     params += "&device[reports][temperature]=";
     params += urlencode(String(temperature));
     params += "&device[reports][distance]=";
-    params += urlencode(String(measureDistance()));
+    params += urlencode(String(distance));
     boolean requestSucceeded = makeRequest(endpoint, params,  true, "POST");
-    if (requestSucceeded){
+    if (requestSucceeded) {
       previousReportMillis = millis();
     }
-    
-   }
+
+  }
 }
 
-void logIn(){
+void logIn() {
   String endpoint = "new_session";
   String params = "";
   params += "&device[password]=";
   params += urlencode(device_password);
   boolean requestSucceeded = false;
-  while (requestSucceeded == false){
+  while (requestSucceeded == false) {
     requestSucceeded = makeRequest(endpoint, params,  false, "GET");
   }
 }
 
-void setLightPorts(){
+void setLightPorts() {
   analogWrite(ch1Pin, red_intensity);
   analogWrite(ch2Pin, green_intensity);
   analogWrite(ch3Pin, white_intensity);
 }
 
-void setValve(){
-  if (co2valve_on == true){
+void setValve() {
+  if (co2valve_on == true) {
     digitalWrite(CO2Pin, HIGH);
   }
-  else{
+  else {
     digitalWrite(CO2Pin, LOW);
   }
 }
@@ -222,16 +259,70 @@ void handleUpdateIntensity() {
 
   const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
   DynamicJsonBuffer jsonBuffer(bufferSize);
-  
+
   String json = server.arg("plain");
-  
+
   JsonObject& root = jsonBuffer.parseObject(json);
 
-    
+
   server.send(200, "text/plain", "hello from esp8266!");
   Serial.println("message:");
   root.printTo(Serial);
   Serial.println(message);
+}
+
+bool updateWaterInputValve(bool isOpen) {
+  if (water_input_valve_ip.length() > 0) {
+    WiFiClient client;
+    String valveParam = "";
+    if (isOpen) {
+      valveParam = "open";
+    }
+    else {
+      valveParam = "close";
+    }
+    if (!client.connect(water_input_valve_ip, 80)) {
+      Serial.println("updateWaterInputValve - connection failed");
+      return false;
+    }
+    if (client.connected()) {
+      Serial.println("Posting valve data...");
+      String host="http://" + water_input_valve_ip;
+      String PostData = "valve=" + valveParam;
+      client.println("POST /valve HTTP/1.1");
+      client.println("Host: " + WiFi.localIP());
+      client.println("Cache-Control: no-cache");
+      client.println("Content-Type: application/x-www-form-urlencoded");
+      client.print("Content-Length: ");
+      client.println(PostData.length());
+      client.println();
+      client.println(PostData);
+
+      long interval = 2000;
+      unsigned long currentMillis = millis(), previousMillis = millis();
+      
+      while(!client.available()){
+      
+        if( (currentMillis - previousMillis) > interval ){   
+          Serial.println("Timeout");
+          client.stop();     
+          return false;
+        }
+        currentMillis = millis();
+      }
+      
+      while (client.connected())
+      {
+        if ( client.available() )
+        {
+          char str=client.read();
+          Serial.println("Message from valve:");
+          Serial.println(str);
+        }      
+      }
+    }
+  }
+  return true;
 }
 
 
@@ -255,10 +346,10 @@ void setup() {
   analogWrite(ch4Pin, 0);
   digitalWrite(CO2Pin, LOW);
   digitalWrite(heaterPin, LOW);
-  
+
   Serial.begin(115200);
   delay(10);
-  
+
   // Connect to WiFi network
   Serial.println();
   Serial.println();
@@ -267,21 +358,21 @@ void setup() {
   Serial.println(ssid);
   WiFi.mode(WIFI_STA); // <<< Station
   WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-   
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
   Serial.println("");
   Serial.println("WiFi connected");
-   
+
   // Print the IP address
   Serial.print("Use this URL to connect: ");
   Serial.print("http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
   logIn();
-  
+
   Serial.println(authentication_token);
 
 
@@ -290,16 +381,18 @@ void setup() {
 }
 
 void loop() {
-  if (loggedIn == false){
-     logIn();
+  if (loggedIn == false) {
+    logIn();
   }
-  
 
-  
+
+
   reportData();
   setLightPorts();
   setValve();
   server.handleClient();          //Handle client requests
+  shouldTurnWaterInputOn(measuredDistance);
+  updateWaterInputValve(water_input_valve_on);
 }
 
 
