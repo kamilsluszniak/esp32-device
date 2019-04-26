@@ -17,6 +17,7 @@ const char* json_buffer = "";
 String name = "aquarium_controller";
 boolean loggedIn = false;
 String water_input_valve_ip = "";
+String valveKey = "13e13460f1728c111a68582fd5370a0b";
 
 
 OneWire oneWire(14);                   //wywołujemy transmisję 1-Wire na pinie 14 (D5)
@@ -185,9 +186,12 @@ int measureDistance() {
 
 void shouldTurnWaterInputOn(int distance) {
   if (waterInputRegulationOn) {
+    Serial.println("waterInputRegulationOn");
     if (distance > maxDistance) {
+      Serial.println("distance: " + String(distance) + " > " + String(maxDistance));
       distanceTriggerCount++;
-      if (distanceTriggerCount > 3) {
+      Serial.println("distance trigger count: " + String(distanceTriggerCount));
+      if (distanceTriggerCount > 2) {
         Serial.println("valve input on:");
         water_input_valve_on = true;
       }
@@ -214,10 +218,13 @@ void reportData() {
     params += "&device[reports][temperature]=";
     params += urlencode(String(temperature));
     params += "&device[reports][distance]=";
-    params += urlencode(String(distance));
+    params += urlencode(String(measuredDistance));
     boolean requestSucceeded = makeRequest(endpoint, params,  true, "POST");
     if (requestSucceeded) {
       previousReportMillis = millis();
+    }
+    else {
+      Serial.println("Reporting failed!!!!!!!!!!!!!!!!!!");
     }
 
   }
@@ -272,6 +279,7 @@ void handleUpdateIntensity() {
 }
 
 bool updateWaterInputValve(bool isOpen) {
+  Serial.println("Water input valve ip: " + water_input_valve_ip);
   if (water_input_valve_ip.length() > 0) {
     WiFiClient client;
     String valveParam = "";
@@ -281,22 +289,28 @@ bool updateWaterInputValve(bool isOpen) {
     else {
       valveParam = "close";
     }
+     Serial.println("Connecting...");
     if (!client.connect(water_input_valve_ip, 80)) {
-      Serial.println("updateWaterInputValve - connection failed");
+      Serial.println("updateWaterInputValve - connection failed: " + water_input_valve_ip);
       return false;
     }
     if (client.connected()) {
       Serial.println("Posting valve data...");
       String host="http://" + water_input_valve_ip;
-      String PostData = "valve=" + valveParam;
-      client.println("POST /valve HTTP/1.1");
-      client.println("Host: " + WiFi.localIP());
-      client.println("Cache-Control: no-cache");
-      client.println("Content-Type: application/x-www-form-urlencoded");
-      client.print("Content-Length: ");
-      client.println(PostData.length());
-      client.println();
-      client.println(PostData);
+      String PostData = "/valve?valve=" + valveParam;
+      PostData += "&key=" + valveKey;
+      Serial.println("Posting: " + PostData);
+      client.print(String("GET ") + PostData + " HTTP/1.1\r\n" +
+               "Host: " + WiFi.localIP() + "\r\n" +
+               "Connection: close\r\n\r\n");
+      unsigned long timeout = millis();
+      while (client.available() == 0) {
+        if (millis() - timeout > 5000) {
+          Serial.println(">>> Client Timeout !");
+          client.stop();
+          return false;
+        }
+      }
 
       long interval = 2000;
       unsigned long currentMillis = millis(), previousMillis = millis();
@@ -311,14 +325,11 @@ bool updateWaterInputValve(bool isOpen) {
         currentMillis = millis();
       }
       
-      while (client.connected())
+      while (client.available())
       {
-        if ( client.available() )
-        {
-          char str=client.read();
-          Serial.println("Message from valve:");
-          Serial.println(str);
-        }      
+        String line = client.readStringUntil('\r');
+        Serial.println("Message from valve:");
+        Serial.println(line);
       }
     }
   }
@@ -391,8 +402,18 @@ void loop() {
   setLightPorts();
   setValve();
   server.handleClient();          //Handle client requests
-  shouldTurnWaterInputOn(measuredDistance);
-  updateWaterInputValve(water_input_valve_on);
+  if (millis() >= previousReportMillis + 60000) {
+    //Serial.println("millis() >= previousReportMillis + 60000");
+    //Serial.println("millis: " + String(millis()));
+    //Serial.println("previousReportMillis: " + String(previousReportMillis));
+    shouldTurnWaterInputOn(measuredDistance);
+    updateWaterInputValve(water_input_valve_on);
+  }
+  else{
+    //Serial.println("not  -  - - - millis() >= previousReportMillis + 60000");
+    //Serial.println("millis: " + String(millis()));
+    //Serial.println("previousReportMillis: " + String(previousReportMillis));
+  }
 }
 
 
