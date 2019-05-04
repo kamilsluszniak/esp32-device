@@ -57,7 +57,7 @@ boolean waterInputRegulationOn = false;
 boolean water_input_valve_on = false;
 int measuredDistance = 0;
 
-MedianFilter filterObject(81, 11505);
+MedianFilter filterObject(41, 270);
 
 
 int ledPin = 2; // D4
@@ -122,6 +122,7 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type) {
       loggedIn = false;
     }
     JsonObject& root = jsonBuffer.parseObject(line);
+    
     // Test if parsing succeeds.
     if (!root.success()) {
 
@@ -159,6 +160,7 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type) {
         }
 
       }
+      root.printTo(Serial);
       loggedIn = true;
     }
   }
@@ -166,21 +168,26 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type) {
 }
 
 int measureDistance() {
+  int j;
   int i;
-  for (i = 0; i < 81; i++) {
-    digitalWrite(trigPin, LOW);
-    delayMicroseconds(2);
-    digitalWrite(trigPin, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(trigPin, LOW);
-    delayMicroseconds(2);
-
-    pulseTime = pulseIn(echoPin, HIGH);
-    distance = pulseTime * 340 / 200;
-
-    filterObject.in(distance);
+  int measurementSum = 0;
+  for (j = 0; j < 4; j++){
+    for (i = 0; i < 41; i++) {
+      digitalWrite(trigPin, LOW);
+      delayMicroseconds(2);
+      digitalWrite(trigPin, HIGH);
+      delayMicroseconds(10);
+      digitalWrite(trigPin, LOW);
+      delayMicroseconds(2);
+  
+      pulseTime = pulseIn(echoPin, HIGH);
+  
+      filterObject.in((int)pulseTime);
+    }
+    measurementSum += filterObject.out();
   }
-  int measuredDistance = filterObject.out();
+
+  int measuredDistance = (int)(measurementSum * 340 / 200 / 4);
   return measuredDistance;
 }
 
