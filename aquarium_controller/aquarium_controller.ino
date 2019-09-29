@@ -1,4 +1,4 @@
-#include <WiFi.h>
+#include <ESP32WiFi.h>
 #include <Wire.h>
 #include <DallasTemperature.h>               //dodaj biblitekę obsługującą DS18B20
 #include <urlencode.h>
@@ -7,15 +7,16 @@
 #include "credentials.h"
 #include <MedianFilter.h>
 
-
-const char* host = "192.168.2.101";
+IPAddress host;
+bool parseSuccess = host.fromString("192.168.2.101");
+//const char * host = "192.168.2.101";
 const int httpPort = 3001;
 String authentication_token = "";
 const char* device = "";
 const char* json_buffer = "";
 String name = "aquarium_controller";
 boolean loggedIn = false;
-String water_input_valve_ip = "";
+IPAddress water_input_valve_ip;
 String valveKey = "13e13460f1728c111a68582fd5370a0b";
 
 
@@ -36,10 +37,15 @@ unsigned int green_intensity = 0;
 unsigned int blue_intensity = 0;
 unsigned int white_intensity = 0;
 
+const int ledFreq = 200;
+const int ledResolution = 10;
+
 int ch1Pin = 5;//D1
 int ch2Pin = 4;//D2
 int ch3Pin = 0;//D3
 int ch4Pin = 2;//D4
+
+
 
 int CO2Pin = 12;//D6
 int heaterPin = 13;//D7
@@ -154,7 +160,7 @@ boolean makeRequest(String endpoint, String params, boolean auth, String type) {
         if (settings.containsKey("connected_devices")) {
           JsonObject& connected_devices = settings["connected_devices"];
           if (connected_devices.containsKey("water_input_valve")) {
-            water_input_valve_ip = connected_devices["water_input_valve"].as<String>();
+            water_input_valve_ip.fromString(connected_devices["water_input_valve"].as<String>());
           }
         }
 
@@ -258,9 +264,9 @@ void logIn() {
 }
 
 void setLightPorts() {
-  analogWrite(ch1Pin, red_intensity);
-  analogWrite(ch2Pin, green_intensity);
-  analogWrite(ch3Pin, white_intensity);
+  ledcWrite(ch1Pin, red_intensity);
+  ledcWrite(ch2Pin, green_intensity);
+  ledcWrite(ch3Pin, white_intensity);
 }
 
 void setValve() {
@@ -275,28 +281,28 @@ void setValve() {
 //     This rutine is exicuted when you open its IP in browser
 //===============================================================
 
-void handleUpdateIntensity() {
-  String message = "Body received:\n";
-  message += server.arg("plain");
-
-
-  const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
-  DynamicJsonBuffer jsonBuffer(bufferSize);
-
-  String json = server.arg("plain");
-
-  JsonObject& root = jsonBuffer.parseObject(json);
-
-
-  server.send(200, "text/plain", "hello from esp8266!");
-  Serial.println("message:");
-  root.printTo(Serial);
-  Serial.println(message);
-}
+//void handleUpdateIntensity() {
+//  String message = "Body received:\n";
+//  message += server.arg("plain");
+//
+//
+//  const size_t bufferSize = JSON_OBJECT_SIZE(1) + 10;
+//  DynamicJsonBuffer jsonBuffer(bufferSize);
+//
+//  String json = server.arg("plain");
+//
+//  JsonObject& root = jsonBuffer.parseObject(json);
+//
+//
+//  server.send(200, "text/plain", "hello from esp8266!");
+//  Serial.println("message:");
+//  root.printTo(Serial);
+//  Serial.println(message);
+//}
 
 bool updateWaterInputValve(bool isOpen) {
   Serial.println("Water input valve ip: " + water_input_valve_ip);
-  if (water_input_valve_ip.length() > 0) {
+  if (water_input_valve_ip.toString().length() > 0) {
     WiFiClient client;
     String valveParam = "";
     if (isOpen) {
@@ -354,7 +360,10 @@ bool updateWaterInputValve(bool isOpen) {
 
 
 void setup() {
-  analogWriteFreq(200);
+  ledcSetup(ch1Pin, ledFreq, ledResolution);
+  ledcSetup(ch2Pin, ledFreq, ledResolution);
+  ledcSetup(ch3Pin, ledFreq, ledResolution);
+  ledcSetup(ch4Pin, ledFreq, ledResolution);
   pinMode(ch1Pin, OUTPUT);
   pinMode(ch2Pin, OUTPUT);
   pinMode(ch3Pin, OUTPUT);
@@ -367,12 +376,12 @@ void setup() {
 
   setLightPorts();
 
-  analogWrite(ch1Pin, 0);
-  analogWrite(ch2Pin, 0);
-  analogWrite(ch3Pin, 0);
-  analogWrite(ch4Pin, 0);
-  digitalWrite(CO2Pin, LOW);
-  digitalWrite(heaterPin, LOW);
+  ledcWrite(ch1Pin, 0);
+  ledcWrite(ch2Pin, 0);
+  ledcWrite(ch3Pin, 0);
+  ledcWrite(ch4Pin, 0);
+  ledcWrite(CO2Pin, LOW);
+  ledcWrite(heaterPin, LOW);
 
   Serial.begin(115200);
   delay(10);
@@ -417,7 +426,7 @@ void loop() {
   reportData();
   setLightPorts();
   setValve();
-  server.handleClient();          //Handle client requests
+  //server.handleClient();          //Handle client requests
   if (millis() >= previousReportMillis + 60000) {
     //Serial.println("millis() >= previousReportMillis + 60000");
     //Serial.println("millis: " + String(millis()));
