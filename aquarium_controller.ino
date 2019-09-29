@@ -1,4 +1,4 @@
-#include <ESP8266WiFi.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <DallasTemperature.h>               //dodaj biblitekę obsługującą DS18B20
 #include <urlencode.h>
@@ -6,7 +6,6 @@
 #include <ArduinoJson.h>
 #include "credentials.h"
 #include <MedianFilter.h>
-#include <ESP8266WebServer.h>   // Include the WebServer library
 
 
 const char* host = "192.168.2.101";
@@ -71,7 +70,7 @@ float temp1 = 0;
 float temp2 = 0;
 
 
-ESP8266WebServer server(80);
+WiFiServer server(80);
 String header;
 
 
@@ -194,6 +193,11 @@ int measureDistance() {
 void shouldTurnWaterInputOn(int distance) {
   if (waterInputRegulationOn) {
     Serial.println("waterInputRegulationOn");
+    Serial.print("distance: ");
+    Serial.println(distance);
+    Serial.print("max distance: ");
+    Serial.println(maxDistance);
+    
     if (distance > maxDistance) {
       Serial.println("distance: " + String(distance) + " > " + String(maxDistance));
       distanceTriggerCount++;
@@ -208,6 +212,11 @@ void shouldTurnWaterInputOn(int distance) {
       water_input_valve_on = false;
       distanceTriggerCount = 0;
     }
+  }
+  else {
+    Serial.println("valve input off 2:");
+    water_input_valve_on = false;
+    distanceTriggerCount = 0;
   }
 }
 
@@ -308,7 +317,7 @@ bool updateWaterInputValve(bool isOpen) {
       PostData += "&key=" + valveKey;
       Serial.println("Posting: " + PostData);
       client.print(String("GET ") + PostData + " HTTP/1.1\r\n" +
-               "Host: " + WiFi.localIP() + "\r\n" +
+               "Host: " + String(WiFi.localIP()) + "\r\n" +
                "Connection: close\r\n\r\n");
       unsigned long timeout = millis();
       while (client.available() == 0) {
