@@ -1,27 +1,41 @@
-#include <ESP32WiFi.h>
+#include <NewPing.h>
+#include <WiFi.h>
 #include <Wire.h>
+//#include <VL53L0X.h>
 #include <DallasTemperature.h>               //dodaj biblitekę obsługującą DS18B20
-#include <urlencode.h>
-#include <string.h>
-#include <ArduinoJson.h>
 #include "credentials.h"
 #include <MedianFilter.h>
+#include "network.h"
+
 
 IPAddress host;
+int echoPin = 35;
+int trigPin = 5;
+NewPing sonar(trigPin, echoPin, 50);
+float pulseTime = 0;
+float distance = 0;
+int maxDistance = 9999;
+int distanceTriggerCount = 0;
+boolean waterInputRegulationOn = false;
+boolean water_input_valve_on = false;
+int measuredDistance = 0;
+
+bool lidarNewData = false;
 bool parseSuccess = host.fromString("192.168.2.101");
 //const char * host = "192.168.2.101";
 const int httpPort = 3001;
 String authentication_token = "";
 const char* device = "";
 const char* json_buffer = "";
-String name = "aquarium_controller";
+String name = "aquarium_controller_v2";
 boolean loggedIn = false;
 IPAddress water_input_valve_ip;
 String valveKey = "13e13460f1728c111a68582fd5370a0b";
 
 
-OneWire oneWire(14);                   //wywołujemy transmisję 1-Wire na pinie 14 (D5)
+OneWire oneWire(23);
 DallasTemperature sensors(&oneWire);         //informujemy Arduino, ze przy pomocy 1-Wire
+Network* connection = new Network(host, name, authentication_token, httpPort);
 
 //settings
 float temperature_set = 0.0;
@@ -34,39 +48,41 @@ unsigned long previousReportMillis = 0;
 
 unsigned int red_intensity = 0;
 unsigned int green_intensity = 0;
-unsigned int blue_intensity = 0;
-unsigned int white_intensity = 0;
+unsigned int uv_intensity = 0;
+unsigned int ww_intensity = 0;
+unsigned int cw_intensity = 0;
+unsigned int full_spectrum_intensity = 0;
 
 const int ledFreq = 200;
 const int ledResolution = 10;
 
-int ch1Pin = 5;//D1
-int ch2Pin = 4;//D2
-int ch3Pin = 0;//D3
-int ch4Pin = 2;//D4
+int ch1Pin = 13;
+int ch2Pin = 15;
+int ch3Pin = 14;
+int ch4Pin = 27;
+int ch5Pin = 26;
+int ch6Pin = 4;//25;
+int ch7Pin = 33;
+int ch8Pin = 32;
 
 
+int wwChannel = 0;
+int cwChannel = 1;
+int greenChannel = 2;
+int redChannel = 3;
+int uvChannel = 4;
+int fullSpectrumChannel = 5;
 
-int CO2Pin = 12;//D6
-int heaterPin = 13;//D7
+int adcPin = 36;
+
+int CO2Pin = 19;
+int heaterPin = 34;
 
 boolean co2valve_on = false;
 
-int trigPin = 15;//D8
-int echoPin = 16;//D0
-float pulseTime = 0;
-float distance = 0;
-int maxDistance = 9999;
-int distanceTriggerCount = 0;
-boolean waterInputRegulationOn = false;
-boolean water_input_valve_on = false;
-int measuredDistance = 0;
 
 MedianFilter filterObject(41, 270);
 
-
-int ledPin = 2; // D4
-int ledPin2 = 12; // D6
 
 DeviceAddress sensor1 = { 0x28, 0xC, 0x1, 0x7, 0xA0, 0x46, 0x1, 0xB1 };
 DeviceAddress sensor2 = { 0x28, 0x2, 0x0, 0x7, 0x8F, 0x20, 0x1, 0x54 };
@@ -75,126 +91,8 @@ float temp0 = 0;
 float temp1 = 0;
 float temp2 = 0;
 
-
 WiFiServer server(80);
 String header;
-
-
-boolean makeRequest(String endpoint, String params, boolean auth, String type) {
-  WiFiClient client;
-  if (!client.connect(host, httpPort)) {
-    Serial.println("connection failed");
-    return false;
-  }
-  // We now create a URI for the request
-  String url = "/";
-
-  url += endpoint;
-
-  url += "?device[name]=";
-  url += urlencode(name);
-  url += params;
-  Serial.println(url);
-  if (auth) {
-    client.print(type + " " + url + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n" +
-                 "AUTHORIZATION: " + authentication_token + "\r\n" +
-                 "Connection: close\r\n\r\n");
-  }
-  else {
-    client.print(type + " " + url + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n" +
-                 "Connection: close\r\n\r\n");
-  }
-
-  unsigned long timeout = millis();
-  while (client.available() == 0) {
-    if (millis() - timeout > 5000) {
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      return false;
-    }
-  }
-  bool status_ok = false;
-  StaticJsonBuffer<700> jsonBuffer;
-  while (client.available()) {
-    String line = client.readStringUntil('\r');
-    if (line.substring(9, 15) == "200 OK") {
-      status_ok = true;
-    }
-    else if (line.substring(9, 25) == "401 Unauthorized") {
-      status_ok = false;
-      loggedIn = false;
-    }
-    JsonObject& root = jsonBuffer.parseObject(line);
-    
-    // Test if parsing succeeds.
-    if (!root.success()) {
-
-    }
-    else {
-      if (root.containsKey("authentication_token")) {
-        String auth_token = root["authentication_token"];
-        authentication_token = auth_token;
-      }
-      if (root.containsKey("settings")) {
-        JsonObject& settings = root["settings"];
-        if (settings.containsKey("temperature_set")) {
-          temperature_set = settings["temperature_set"];
-        }
-        if (settings.containsKey("intensity")) {
-          JsonObject& intensity = settings["intensity"];
-          red_intensity = intensity["red"];
-          green_intensity = intensity["green"];
-          white_intensity = intensity["white"];
-        }
-        if (settings.containsKey("co2valve_on")) {
-          co2valve_on = settings["co2valve_on"];
-        }
-        if (settings.containsKey("water_input_valve_on")) {
-          waterInputRegulationOn = settings["water_input_valve_on"];
-        }
-        if (settings.containsKey("distance")) {
-          maxDistance = settings["distance"];
-        }
-        if (settings.containsKey("connected_devices")) {
-          JsonObject& connected_devices = settings["connected_devices"];
-          if (connected_devices.containsKey("water_input_valve")) {
-            water_input_valve_ip.fromString(connected_devices["water_input_valve"].as<String>());
-          }
-        }
-
-      }
-      root.printTo(Serial);
-      loggedIn = true;
-    }
-  }
-  return status_ok;
-}
-
-int measureDistance() {
-  int j;
-  int i;
-  int measurementSum = 0;
-  for (j = 0; j < 4; j++){
-    for (i = 0; i < 41; i++) {
-      digitalWrite(trigPin, LOW);
-      delayMicroseconds(2);
-      digitalWrite(trigPin, HIGH);
-      delayMicroseconds(10);
-      digitalWrite(trigPin, LOW);
-      delayMicroseconds(2);
-  
-      pulseTime = pulseIn(echoPin, HIGH);
-  
-      filterObject.in((int)pulseTime);
-    }
-    measurementSum += filterObject.out();
-  }
-
-  int measuredDistance = (int)(measurementSum * 340 / 200 / 4);
-  return measuredDistance;
-}
 
 void shouldTurnWaterInputOn(int distance) {
   if (waterInputRegulationOn) {
@@ -226,26 +124,71 @@ void shouldTurnWaterInputOn(int distance) {
   }
 }
 
+void decodeJsonObjectSettings(DynamicJsonDocument root){
+  if (root.containsKey("settings")) {
+    JsonObject settings = root["settings"];
+    //settings.printTo(Serial);
+    if (settings.containsKey("temperature_set")) {
+      temperature_set = settings["temperature_set"];
+    }
+    if (settings.containsKey("intensity")) {
+      JsonObject intensity = settings["intensity"];
+      red_intensity = intensity["red"];
+      green_intensity = intensity["green"];
+      ww_intensity = intensity["ww"];
+      cw_intensity = intensity["cw"];
+      uv_intensity = intensity["uv"];
+      full_spectrum_intensity = intensity["full_spectrum"];
+      //intensity.printTo(Serial);
+    }
+    if (settings.containsKey("co2valve_on")) {
+      co2valve_on = settings["co2valve_on"];
+    }
+    if (settings.containsKey("water_input_valve_on")) {
+      waterInputRegulationOn = settings["water_input_valve_on"];
+    }
+    if (settings.containsKey("distance")) {
+      maxDistance = settings["distance"];
+    }
+    if (settings.containsKey("connected_devices")) {
+      JsonObject connected_devices = settings["connected_devices"];
+      if (connected_devices.containsKey("water_input_valve")) {
+        water_input_valve_ip.fromString(connected_devices["water_input_valve"].as<String>());
+        Serial.println(water_input_valve_ip.toString());
+      }
+    }
+
+  }
+}
 
 void reportData() {
   if (millis() >= previousReportMillis + 60000) {
+    Serial.println("1");
+    //sensors.requestTemperatures(); // Send the command to get temperatures
+    Serial.println("2");
+    //float temperature = sensors.getTempCByIndex(0);
+    measuredDistance = sonar.ping_median(15);
+    Serial.println("median: ");
+    Serial.println(measuredDistance);
 
-    sensors.requestTemperatures(); // Send the command to get temperatures
-
-    float temperature = sensors.getTempCByIndex(0);
-    measuredDistance = measureDistance();
-
+    Serial.println("3");
     String endpoint = "reports";
     String params = "";
     params += "&device[reports][temperature]=";
-    params += urlencode(String(temperature));
+    params += urlencode(String(1));
     params += "&device[reports][distance]=";
     params += urlencode(String(measuredDistance));
-    boolean requestSucceeded = makeRequest(endpoint, params,  true, "POST");
-    if (requestSucceeded) {
+    Serial.println("4");
+    DynamicJsonDocument root = connection->makeRequest(endpoint, params,  true, "POST");
+
+    decodeJsonObjectSettings(root);
+    Serial.println("5");
+    JsonVariant error = root["error"];
+    if (!error) {
       previousReportMillis = millis();
     }
     else {
+      loggedIn = false;
       Serial.println("Reporting failed!!!!!!!!!!!!!!!!!!");
     }
 
@@ -258,15 +201,33 @@ void logIn() {
   params += "&device[password]=";
   params += urlencode(device_password);
   boolean requestSucceeded = false;
-  while (requestSucceeded == false) {
-    requestSucceeded = makeRequest(endpoint, params,  false, "GET");
+  
+  DynamicJsonDocument root = connection->makeRequest(endpoint, params,  false, "GET");
+  //root.printTo(Serial);
+  JsonVariant error = root["error"];
+  if (error) {
+    Serial.println("login error");
+    loggedIn = false;
   }
+  JsonVariant authentication_token_variant = root["authentication_token"];
+  String token = root["authentication_token"];
+
+  if (!authentication_token_variant.isNull()) {
+    String auth_token = root["authentication_token"];
+    authentication_token = auth_token;
+    connection->setAuthToken(authentication_token);
+    loggedIn = true;
+  }
+  
 }
 
 void setLightPorts() {
-  ledcWrite(ch1Pin, red_intensity);
-  ledcWrite(ch2Pin, green_intensity);
-  ledcWrite(ch3Pin, white_intensity);
+  ledcWrite(wwChannel, ww_intensity);
+  ledcWrite(cwChannel, cw_intensity);
+  ledcWrite(greenChannel, green_intensity);
+  ledcWrite(redChannel, red_intensity);
+  ledcWrite(uvChannel, uv_intensity);
+  ledcWrite(fullSpectrumChannel, full_spectrum_intensity);
 }
 
 void setValve() {
@@ -301,8 +262,8 @@ void setValve() {
 //}
 
 bool updateWaterInputValve(bool isOpen) {
-  Serial.println("Water input valve ip: " + water_input_valve_ip);
-  if (water_input_valve_ip.toString().length() > 0) {
+  const char* valve_ip = water_input_valve_ip.toString().c_str();
+  if (strlen(valve_ip) > 0) {
     WiFiClient client;
     String valveParam = "";
     if (isOpen) {
@@ -311,14 +272,14 @@ bool updateWaterInputValve(bool isOpen) {
     else {
       valveParam = "close";
     }
-     Serial.println("Connecting...");
-    if (!client.connect(water_input_valve_ip, 80)) {
-      Serial.println("updateWaterInputValve - connection failed: " + water_input_valve_ip);
+    Serial.println("Connecting...");
+    if (!client.connect(valve_ip, 80)) {
+      Serial.println("updateWaterInputValve - connection failed: " + water_input_valve_ip.toString());
       return false;
     }
     if (client.connected()) {
       Serial.println("Posting valve data...");
-      String host="http://" + water_input_valve_ip;
+      String host="http://" + water_input_valve_ip.toString();
       String PostData = "/valve?valve=" + valveParam;
       PostData += "&key=" + valveKey;
       Serial.println("Posting: " + PostData);
@@ -358,33 +319,43 @@ bool updateWaterInputValve(bool isOpen) {
   return true;
 }
 
-
 void setup() {
-  ledcSetup(ch1Pin, ledFreq, ledResolution);
-  ledcSetup(ch2Pin, ledFreq, ledResolution);
-  ledcSetup(ch3Pin, ledFreq, ledResolution);
-  ledcSetup(ch4Pin, ledFreq, ledResolution);
   pinMode(ch1Pin, OUTPUT);
   pinMode(ch2Pin, OUTPUT);
   pinMode(ch3Pin, OUTPUT);
   pinMode(ch4Pin, OUTPUT);
+  pinMode(ch5Pin, OUTPUT);
+  pinMode(ch6Pin, OUTPUT);
+
+  ledcSetup(wwChannel, ledFreq, ledResolution);
+  ledcSetup(cwChannel, ledFreq, ledResolution);
+  ledcSetup(greenChannel, ledFreq, ledResolution);
+  ledcSetup(redChannel, ledFreq, ledResolution);
+  ledcSetup(uvChannel, ledFreq, ledResolution);
+  ledcSetup(fullSpectrumChannel, ledFreq, ledResolution);
+  
+  ledcAttachPin(ch1Pin, wwChannel);
+  ledcAttachPin(ch2Pin, cwChannel);
+  ledcAttachPin(ch3Pin, greenChannel);
+  ledcAttachPin(ch4Pin, redChannel);
+  ledcAttachPin(ch5Pin, uvChannel);
+  ledcAttachPin(ch6Pin, fullSpectrumChannel);
+
   pinMode(CO2Pin, OUTPUT);
   pinMode(heaterPin, OUTPUT);
-
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
   pinMode(echoPin, INPUT); // Sets the echoPin as an Input
 
   setLightPorts();
 
-  ledcWrite(ch1Pin, 0);
-  ledcWrite(ch2Pin, 0);
-  ledcWrite(ch3Pin, 0);
-  ledcWrite(ch4Pin, 0);
-  ledcWrite(CO2Pin, LOW);
-  ledcWrite(heaterPin, LOW);
-
-  Serial.begin(115200);
+  Serial.begin(9600);
   delay(10);
+  Wire.begin(21, 22, 400000); // SDA (21), SCL (22) on ESP32, 400 kHz rate
+  delay(500);
+//  lidar.init();
+//  lidar.setTimeout(500);
+//   //increase timing budget to 200 ms
+//  lidar.setMeasurementTimingBudget(20000);
 
   // Connect to WiFi network
   Serial.println();
@@ -414,19 +385,28 @@ void setup() {
 
   Serial.println();
   Serial.println("closing connection");
+//  attachInterrupt(lidarIntPin, lidarIntHandler, FALLING);  // define interrupt for GPI01 pin output of VL53L0X
+//  lidar.startContinuous(1000);
 }
 
 void loop() {
   if (loggedIn == false) {
     logIn();
   }
-
-
+ 
+//  if (lidarNewData) {
+//    measuredDistance = lidar.readRangeContinuousMillimeters();
+//    if (lidar.timeoutOccurred()) { Serial.print("LIDAR TIMEOUT"); }
+//    Serial.print("Distance: ");
+//    Serial.println(measuredDistance);
+//    lidarNewData = false;
+//  }
 
   reportData();
   setLightPorts();
+
   setValve();
-  //server.handleClient();          //Handle client requests
+//  //server.handleClient();          //Handle client requests
   if (millis() >= previousReportMillis + 60000) {
     //Serial.println("millis() >= previousReportMillis + 60000");
     //Serial.println("millis: " + String(millis()));
@@ -434,13 +414,9 @@ void loop() {
     shouldTurnWaterInputOn(measuredDistance);
     updateWaterInputValve(water_input_valve_on);
   }
-  else{
-    //Serial.println("not  -  - - - millis() >= previousReportMillis + 60000");
-    //Serial.println("millis: " + String(millis()));
-    //Serial.println("previousReportMillis: " + String(previousReportMillis));
-  }
+//  else{
+//    //Serial.println("not  -  - - - millis() >= previousReportMillis + 60000");
+//    //Serial.println("millis: " + String(millis()));
+//    //Serial.println("previousReportMillis: " + String(previousReportMillis));
+//  }
 }
-
-
-
-
