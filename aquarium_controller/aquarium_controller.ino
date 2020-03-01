@@ -46,12 +46,10 @@ unsigned long current_time = 0;
 unsigned long currentMillis = 0;
 unsigned long previousReportMillis = 0;
 
-unsigned int red_intensity = 0;
-unsigned int green_intensity = 0;
-unsigned int uv_intensity = 0;
-unsigned int ww_intensity = 0;
-unsigned int cw_intensity = 0;
-unsigned int full_spectrum_intensity = 0;
+unsigned int ch1_intensity = 0;
+unsigned int ch2_intensity = 0;
+unsigned int ch3_intensity = 0;
+unsigned int ch4_intensity = 0;
 
 const int ledFreq = 200;
 const int ledResolution = 10;
@@ -66,12 +64,10 @@ int ch7Pin = 33;
 int ch8Pin = 32;
 
 
-int wwChannel = 0;
-int cwChannel = 1;
-int greenChannel = 2;
-int redChannel = 3;
-int uvChannel = 4;
-int fullSpectrumChannel = 5;
+int ch1Channel = 0;
+int ch2Channel = 1;
+int ch3Channel = 2;
+int ch4Channel = 3;
 
 int adcPin = 36;
 
@@ -133,13 +129,10 @@ void decodeJsonObjectSettings(DynamicJsonDocument root){
     }
     if (settings.containsKey("intensity")) {
       JsonObject intensity = settings["intensity"];
-      red_intensity = intensity["red"];
-      green_intensity = intensity["green"];
-      ww_intensity = intensity["ww"];
-      cw_intensity = intensity["cw"];
-      uv_intensity = intensity["uv"];
-      full_spectrum_intensity = intensity["full_spectrum"];
-      //intensity.printTo(Serial);
+      ch1_intensity = intensity["ch1"];
+      ch2_intensity = intensity["ch2"];
+      ch3_intensity = intensity["ch3"];
+      ch4_intensity = intensity["ch4"];
     }
     if (settings.containsKey("co2valve_on")) {
       co2valve_on = settings["co2valve_on"];
@@ -167,7 +160,6 @@ void reportData() {
     //sensors.requestTemperatures(); // Send the command to get temperatures
     Serial.println("2");
     //float temperature = sensors.getTempCByIndex(0);
-    measuredDistance = sonar.ping_median(15);
     Serial.println("median: ");
     Serial.println(measuredDistance);
 
@@ -191,7 +183,6 @@ void reportData() {
       loggedIn = false;
       Serial.println("Reporting failed!!!!!!!!!!!!!!!!!!");
     }
-
   }
 }
 
@@ -203,9 +194,10 @@ void logIn() {
   boolean requestSucceeded = false;
   
   DynamicJsonDocument root = connection->makeRequest(endpoint, params,  false, "GET");
-  //root.printTo(Serial);
+  serializeJsonPretty(root, Serial);
   JsonVariant error = root["error"];
   if (error) {
+    serializeJsonPretty(error, Serial);
     Serial.println("login error");
     loggedIn = false;
   }
@@ -222,12 +214,10 @@ void logIn() {
 }
 
 void setLightPorts() {
-  ledcWrite(wwChannel, ww_intensity);
-  ledcWrite(cwChannel, cw_intensity);
-  ledcWrite(greenChannel, green_intensity);
-  ledcWrite(redChannel, red_intensity);
-  ledcWrite(uvChannel, uv_intensity);
-  ledcWrite(fullSpectrumChannel, full_spectrum_intensity);
+  ledcWrite(ch1Channel, ch1_intensity);
+  ledcWrite(ch2Channel, ch2_intensity);
+  ledcWrite(ch3Channel, ch3_intensity);
+  ledcWrite(ch4Channel, ch4_intensity);
 }
 
 void setValve() {
@@ -327,19 +317,15 @@ void setup() {
   pinMode(ch5Pin, OUTPUT);
   pinMode(ch6Pin, OUTPUT);
 
-  ledcSetup(wwChannel, ledFreq, ledResolution);
-  ledcSetup(cwChannel, ledFreq, ledResolution);
-  ledcSetup(greenChannel, ledFreq, ledResolution);
-  ledcSetup(redChannel, ledFreq, ledResolution);
-  ledcSetup(uvChannel, ledFreq, ledResolution);
-  ledcSetup(fullSpectrumChannel, ledFreq, ledResolution);
+  ledcSetup(ch1Channel, ledFreq, ledResolution);
+  ledcSetup(ch2Channel, ledFreq, ledResolution);
+  ledcSetup(ch3Channel, ledFreq, ledResolution);
+  ledcSetup(ch4Channel, ledFreq, ledResolution);
   
-  ledcAttachPin(ch1Pin, wwChannel);
-  ledcAttachPin(ch2Pin, cwChannel);
-  ledcAttachPin(ch3Pin, greenChannel);
-  ledcAttachPin(ch4Pin, redChannel);
-  ledcAttachPin(ch5Pin, uvChannel);
-  ledcAttachPin(ch6Pin, fullSpectrumChannel);
+  ledcAttachPin(ch1Pin, ch1Channel);
+  ledcAttachPin(ch2Pin, ch2Channel);
+  ledcAttachPin(ch3Pin, ch3Channel);
+  ledcAttachPin(ch4Pin, ch4Channel);
 
   pinMode(CO2Pin, OUTPUT);
   pinMode(heaterPin, OUTPUT);
@@ -352,26 +338,11 @@ void setup() {
   delay(10);
   Wire.begin(21, 22, 400000); // SDA (21), SCL (22) on ESP32, 400 kHz rate
   delay(500);
-//  lidar.init();
-//  lidar.setTimeout(500);
-//   //increase timing budget to 200 ms
-//  lidar.setMeasurementTimingBudget(20000);
-
-  // Connect to WiFi network
-  Serial.println();
-  Serial.println();
-  Serial.println("dupa");
-  Serial.print("Connecting to ");
   Serial.println(ssid);
   WiFi.mode(WIFI_STA); // <<< Station
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
+  Serial.println();
+  Serial.println();
+  wifiConnect();
 
   // Print the IP address
   Serial.print("Use this URL to connect: ");
@@ -385,22 +356,35 @@ void setup() {
 
   Serial.println();
   Serial.println("closing connection");
-//  attachInterrupt(lidarIntPin, lidarIntHandler, FALLING);  // define interrupt for GPI01 pin output of VL53L0X
-//  lidar.startContinuous(1000);
+
+}
+
+void wifiConnect() {
+  Serial.print("Connecting to ");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+}
+
+void verifyConnectionStatus() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (WiFi.status() != WL_CONNECTION_LOST) {
+       Serial.println("connection lost!");
+    }
+    wifiConnect();
+  }
 }
 
 void loop() {
+  verifyConnectionStatus();
   if (loggedIn == false) {
     logIn();
   }
- 
-//  if (lidarNewData) {
-//    measuredDistance = lidar.readRangeContinuousMillimeters();
-//    if (lidar.timeoutOccurred()) { Serial.print("LIDAR TIMEOUT"); }
-//    Serial.print("Distance: ");
-//    Serial.println(measuredDistance);
-//    lidarNewData = false;
-//  }
 
   reportData();
   setLightPorts();
@@ -408,15 +392,8 @@ void loop() {
   setValve();
 //  //server.handleClient();          //Handle client requests
   if (millis() >= previousReportMillis + 60000) {
-    //Serial.println("millis() >= previousReportMillis + 60000");
-    //Serial.println("millis: " + String(millis()));
-    //Serial.println("previousReportMillis: " + String(previousReportMillis));
+
     shouldTurnWaterInputOn(measuredDistance);
     updateWaterInputValve(water_input_valve_on);
   }
-//  else{
-//    //Serial.println("not  -  - - - millis() >= previousReportMillis + 60000");
-//    //Serial.println("millis: " + String(millis()));
-//    //Serial.println("previousReportMillis: " + String(previousReportMillis));
-//  }
 }

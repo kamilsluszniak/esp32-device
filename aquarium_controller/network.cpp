@@ -40,6 +40,7 @@ DynamicJsonDocument Network::makeRequest(String endpoint, String params, boolean
   //JsonObject response = jsonDocument.createObject();
   if (!client.connect(host, networkPort)) {
     jsonDocument["error"] = "connection failed";
+    Serial.println("connection failed - !client.connect");
     return jsonDocument;
   }
   // We now create a URI for the request
