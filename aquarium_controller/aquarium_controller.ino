@@ -197,7 +197,6 @@ void logIn() {
   serializeJsonPretty(root, Serial);
   JsonVariant error = root["error"];
   if (error) {
-    serializeJsonPretty(error, Serial);
     Serial.println("login error");
     loggedIn = false;
   }
