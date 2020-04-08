@@ -160,6 +160,7 @@ void reportData() {
     //sensors.requestTemperatures(); // Send the command to get temperatures
     Serial.println("2");
     //float temperature = sensors.getTempCByIndex(0);
+    measuredDistance = sonar.ping_median(35);
     Serial.println("median: ");
     Serial.println(measuredDistance);
 
@@ -296,11 +297,10 @@ bool updateWaterInputValve(bool isOpen) {
         }
         currentMillis = millis();
       }
-      
+      Serial.println("Message from valve:");
       while (client.available())
       {
         String line = client.readStringUntil('\r');
-        Serial.println("Message from valve:");
         Serial.println(line);
       }
     }
@@ -372,9 +372,11 @@ void wifiConnect() {
 
 void verifyConnectionStatus() {
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Disconnected!");
     if (WiFi.status() != WL_CONNECTION_LOST) {
        Serial.println("connection lost!");
     }
+    WiFi.disconnect();
     wifiConnect();
   }
 }
